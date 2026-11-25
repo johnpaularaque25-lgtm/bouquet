@@ -1,0 +1,270 @@
+
+
+s<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make your bouquet</title>
+<style>
+  html,body{margin:0;height:100%;background:#05050f;color:#ffd6e8;font-family:"Courier New",monospace;overflow:hidden}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #gl{display:none}
+  .panel{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;
+         text-align:center;padding:20px;z-index:5;background:rgba(5,5,15,.88)}
+  .panel.show{display:flex}
+  h1{font-size:clamp(26px,6vw,56px);margin:0 0 10px;color:#ff9ecb;letter-spacing:2px}
+  p{margin:6px 0 18px;color:#b9a8d6}
+  button{font-family:inherit;font-size:18px;color:#05050f;background:#ff9ecb;border:0;border-radius:10px;
+         padding:12px 26px;cursor:pointer}
+  button:hover{background:#ffd166}
+  button:disabled{background:#443b55;color:#8a7da3;cursor:not-allowed}
+  button.ghost{background:transparent;color:#ff9ecb;border:1px solid #ff9ecb;padding:8px 14px;font-size:14px}
+  .grid{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;max-width:760px;margin-bottom:16px}
+  .card{width:130px;padding:14px 8px;border:1px solid #3a3358;border-radius:14px;background:#0d0d22}
+  .card .em{font-size:44px}
+  .card .nm{margin:4px 0 8px}
+  .card .ct{display:flex;align-items:center;justify-content:center;gap:10px}
+  .card .ct button{padding:2px 12px;font-size:18px;border-radius:8px}
+  .card .ct span{min-width:22px;font-size:20px;color:#ffd166}
+  input{font-family:inherit;font-size:16px;padding:8px 12px;border-radius:8px;border:1px solid #3a3358;
+        background:#0d0d22;color:#ffd6e8;text-align:center;margin-bottom:14px}
+  #hud{position:fixed;left:0;right:0;bottom:10px;text-align:center;z-index:3;display:none;pointer-events:none}
+  #hud pre{margin:0;color:#ff9ecb;font-size:15px;line-height:1.05}
+  #tools{position:fixed;top:12px;right:12px;z-index:4;display:none;gap:8px}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="asc"></canvas>
+
+<div id="tools"><button class="ghost" id="back">&larr; pick again</button>
+<button class="ghost" id="mode">smooth 3D</button></div>
+<div id="hud"><pre id="hudtxt"></pre></div>
+
+<!-- 1. the note -->
+<div class="panel show" id="p-note">
+  <h1>&#10047; Make your bouquet &#10047;</h1>
+  <p>Pick the flowers you love. We'll tie them together for you.</p>
+  <button id="start">Start</button>
+</div>
+
+<!-- 2. picker -->
+<div class="panel" id="p-pick">
+  <h1 style="font-size:clamp(22px,4vw,36px)">Pick your flowers</h1>
+  <p id="total">0 / 15 picked (choose at least 3)</p>
+  <div class="grid" id="grid"></div>
+  <input id="who" placeholder="Who is it for? (name)" maxlength="20">
+  <button id="make" disabled>Make bouquet</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const MAXF = 15, MINF = 3;
+const FLOWERS = [
+  {id:'rose',      name:'Rose',      emoji:'🌹', colors:[0xe63946,0xff4d6d,0xff8fa3]},
+  {id:'tulip',     name:'Tulip',     emoji:'🌷', colors:[0xff5da2,0xffa347,0xc77dff]},
+  {id:'daisy',     name:'Daisy',     emoji:'🌼', colors:[0xffffff,0xfff3b0]},
+  {id:'sunflower', name:'Sunflower', emoji:'🌻', colors:[0xffc300,0xffa200]},
+  {id:'lavender',  name:'Lavender',  emoji:'💜', colors:[0x9d4edd,0x7b6cff,0xb388ff]},
+];
+const counts = {}; FLOWERS.forEach(f => counts[f.id] = 0);
+const $ = id => document.getElementById(id);
+const total = () => Object.values(counts).reduce((a,b)=>a+b,0);
+
+/* ---------- UI ---------- */
+const grid = $('grid');
+FLOWERS.forEach(f => {
+  const d = document.createElement('div'); d.className = 'card';
+  d.innerHTML = `<div class="em">${f.emoji}</div><div class="nm">${f.name}</div>
+    <div class="ct"><button data-d="-1">-</button><span id="c-${f.id}">0</span><button data-d="1">+</button></div>`;
+  d.querySelectorAll('button').forEach(b => b.onclick = () => {
+    const nv = counts[f.id] + (+b.dataset.d);
+    if (nv < 0 || total() + (+b.dataset.d) > MAXF) return;
+    counts[f.id] = nv; $('c-'+f.id).textContent = nv; refresh();
+  });
+  grid.appendChild(d);
+});
+function refresh(){
+  $('total').textContent = `${total()} / ${MAXF} picked (choose at least ${MINF})`;
+  $('make').disabled = total() < MINF;
+}
+function show(id){
+  ['p-note','p-pick'].forEach(p => $(p).classList.toggle('show', p === id));
+  const view = id === null;
+  $('hud').style.display = $('tools').style.display = view ? (view ? 'flex' : 'none') : 'none';
+  $('hud').style.display = view ? 'block' : 'none';
+}
+$('start').onclick = () => show('p-pick');
+$('back').onclick  = () => { running = false; show('p-pick'); };
+$('make').onclick  = () => {
+  const who = $('who').value.trim() || 'you';
+  $('hudtxt').textContent = `   /\\_/\\\n  ( OwO )\n  > ^ <\nfor ${who} ♥`;
+  buildBouquet(); show(null); running = true; t0 = performance.now();
+};
+
+/* ---------- three.js ---------- */
+const renderer = new THREE.WebGLRenderer({canvas:$('gl'), antialias:false, preserveDrawingBuffer:true});
+renderer.setClearColor(0x05050f, 1);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+camera.position.set(0, 0.6, 10.5); camera.lookAt(0, 0.2, 0);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(4, 6, 8); scene.add(sun);
+const rim = new THREE.PointLight(0xaa88ff, 0.6, 40); rim.position.set(-6, 2, -4); scene.add(rim);
+
+// stars
+(() => {
+  const n = 350, pos = new Float32Array(n*3);
+  for (let i=0;i<n;i++){
+    pos[i*3]   = (Math.random()-.5)*60;
+    pos[i*3+1] = (Math.random()-.5)*34;
+    pos[i*3+2] = -12 - Math.random()*10;
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({color:0x9999bb, size:1, sizeAttenuation:false})));
+})();
+
+const lam = c => new THREE.MeshLambertMaterial({color:c});
+function ell(r,sx,sy,sz,col){
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r,10,8), lam(col)); m.scale.set(sx,sy,sz); return m;
+}
+function makeFlower(id, col){
+  const g = new THREE.Group();
+  if (id === 'rose'){
+    for (let ring=0; ring<3; ring++){
+      const n = 5-ring, rad = 0.34-ring*0.1;
+      for (let i=0;i<n;i++){
+        const a = i/n*6.283 + ring;
+        const p = ell(0.22,1,1,0.5,col); p.position.set(Math.cos(a)*rad, Math.sin(a)*rad, ring*0.12); g.add(p);
+      }
+    }
+    const c = ell(0.16,1,1,1,col); c.position.z = 0.3; g.add(c);
+  } else if (id === 'daisy' || id === 'sunflower'){
+    const big = id === 'sunflower', n = big ? 16 : 12, rad = big ? 0.62 : 0.48;
+    for (let i=0;i<n;i++){
+      const a = i/n*6.283;
+      const p = ell(0.2, 0.45, big?1.5:1.3, 0.2, col);
+      p.position.set(Math.cos(a)*rad, Math.sin(a)*rad, 0); p.rotation.z = a - Math.PI/2; g.add(p);
+    }
+    const c = ell(big?0.4:0.22,1,1,0.5, big ? 0x5a3418 : 0xffc300); c.position.z = 0.08; g.add(c);
+  } else if (id === 'tulip'){
+    [[-0.13,0,0],[0.13,0,0],[0,0,0.12]].forEach(o => {
+      const p = ell(0.3,0.8,1.25,0.8,col); p.position.set(...o); g.add(p);
+    });
+  } else { // lavender spike pointing outward
+    for (let i=0;i<9;i++){
+      const p = ell(0.13 - i*0.006,1,1,1,col);
+      p.position.set((Math.random()-.5)*0.12,(Math.random()-.5)*0.12, -0.2 + i*0.14); g.add(p);
+    }
+  }
+  return g;
+}
+
+let bouquet = null, heads = [];
+function buildBouquet(){
+  if (bouquet) scene.remove(bouquet);
+  bouquet = new THREE.Group(); heads = [];
+  const list = [];
+  FLOWERS.forEach(f => { for (let i=0;i<counts[f.id];i++) list.push(f); });
+  for (let i=list.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [list[i],list[j]]=[list[j],list[i]]; }
+
+  const N = list.length, center = new THREE.Vector3(0, 0.5, 0), base = new THREE.Vector3(0, -1.3, 0);
+  const R = Math.max(1.3, Math.min(2.0, 0.55*Math.sqrt(N)+0.6));
+  list.forEach((f,i) => {
+    const t = (i+0.5)/N, theta = Math.acos(1 - 0.65*t), phi = i*2.39996;
+    const dir = new THREE.Vector3(Math.sin(theta)*Math.cos(phi), Math.cos(theta), Math.sin(theta)*Math.sin(phi));
+    const pos = center.clone().add(dir.clone().multiplyScalar(R));
+    const col = f.colors[Math.floor(Math.random()*f.colors.length)];
+    const fl = makeFlower(f.id, col);
+    fl.position.copy(pos); fl.lookAt(pos.clone().add(dir));
+    fl.userData = {delay: i*0.15}; fl.scale.setScalar(0.001);
+    bouquet.add(fl); heads.push(fl);
+    // stem
+    const v = pos.clone().sub(base), len = v.length();
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,len,6), lam(0x3ddc84));
+    stem.position.copy(base).add(v.clone().multiplyScalar(0.5));
+    stem.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), v.normalize());
+    bouquet.add(stem);
+  });
+  // wrapping cone + ribbon
+  const wrap = new THREE.Mesh(new THREE.ConeGeometry(1.5,3.2,14,1,true),
+    new THREE.MeshLambertMaterial({color:0xff9ecb, side:THREE.DoubleSide, flatShading:true}));
+  wrap.rotation.x = Math.PI; wrap.position.y = -1.3; bouquet.add(wrap);
+  const rib = new THREE.Mesh(new THREE.TorusGeometry(1.17,0.07,6,24), lam(0xffd166));
+  rib.rotation.x = Math.PI/2; rib.position.y = -0.4; bouquet.add(rib);
+  scene.add(bouquet);
+}
+
+/* ---------- ASCII renderer ---------- */
+let ascii = true, running = false, t0 = 0, dragging = false, lastX = 0;
+const CW = 7, CH = 11, RAMP = " .:-=+*o%#@";
+const off = document.createElement('canvas'), octx = off.getContext('2d', {willReadFrequently:true});
+const ac = $('asc'), actx = ac.getContext('2d');
+let sized = '';
+
+function resizeFor(){
+  if (ascii){
+    const cols = Math.floor(innerWidth/CW), rows = Math.floor(innerHeight/CH);
+    const key = cols+'x'+rows;
+    if (key !== sized){
+      sized = key; renderer.setPixelRatio(1); renderer.setSize(cols, rows, false);
+      off.width = cols; off.height = rows; ac.width = cols*CW; ac.height = rows*CH;
+      camera.aspect = (cols*CW)/(rows*CH); camera.updateProjectionMatrix();
+    }
+  } else {
+    const key = 'smooth'+innerWidth+'x'+innerHeight;
+    if (key !== sized){
+      sized = key; renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth, innerHeight, false);
+      camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+    }
+  }
+}
+addEventListener('resize', () => { sized = ''; });
+$('mode').onclick = () => {
+  ascii = !ascii; sized = '';
+  $('gl').style.display  = ascii ? 'none' : 'block';
+  $('asc').style.display = ascii ? 'block' : 'none';
+  $('mode').textContent = ascii ? 'smooth 3D' : 'ASCII';
+};
+addEventListener('pointerdown', e => { dragging = true; lastX = e.clientX; });
+addEventListener('pointerup',   () => dragging = false);
+addEventListener('pointermove', e => { if (dragging && bouquet){ bouquet.rotation.y += (e.clientX-lastX)*0.01; lastX = e.clientX; } });
+
+function drawAscii(){
+  octx.drawImage(renderer.domElement, 0, 0);
+  const cols = off.width, rows = off.height, d = octx.getImageData(0,0,cols,rows).data;
+  actx.fillStyle = '#05050f'; actx.fillRect(0,0,ac.width,ac.height);
+  actx.font = `bold ${CH}px "Courier New", monospace`; actx.textBaseline = 'top';
+  for (let y=0;y<rows;y++) for (let x=0;x<cols;x++){
+    const k = (y*cols+x)*4, r=d[k], g=d[k+1], b=d[k+2], mx = Math.max(r,g,b);
+    if (mx < 22) continue;
+    const lum = (0.299*r + 0.587*g + 0.114*b)/255;
+    const ch = RAMP[Math.min(RAMP.length-1, Math.floor(lum*RAMP.length*1.15))];
+    if (ch === ' ') continue;
+    const s = 255/mx;
+    actx.fillStyle = `rgb(${r*s|0},${g*s|0},${b*s|0})`;
+    actx.fillText(ch, x*CW, y*CH);
+  }
+}
+
+function frame(){
+  requestAnimationFrame(frame);
+  if (!running || !bouquet) return;
+  const t = (performance.now()-t0)/1000;
+  heads.forEach(h => {
+    const k = Math.min(1, Math.max(0, (t - h.userData.delay)/0.6));
+    h.scale.setScalar(Math.max(0.001, 1 - Math.pow(1-k, 3)));
+  });
+  if (!dragging) bouquet.rotation.y += 0.006;
+  bouquet.position.y = Math.sin(t*1.2)*0.08;
+  resizeFor();
+  renderer.render(scene, camera);
+  if (ascii) drawAscii();
+}
+frame();
+</script>
+</body>
+</html>
+"""
+
